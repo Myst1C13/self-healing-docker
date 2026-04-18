@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+numpy
+boto3
+python-dotenv
+pytest
+psutil
+docker
+requests
