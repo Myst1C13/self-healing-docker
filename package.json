@@ -1,0 +1,11 @@
+{
+  "name": "self-healing-docker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "demo": "python3 scripts/demo.py",
+    "demo:live": "python3 scripts/live_watch.py",
+    "test": "python3 -m pytest tests -q",
+    "verify": "python3 -m pytest tests -q"
+  }
+}
