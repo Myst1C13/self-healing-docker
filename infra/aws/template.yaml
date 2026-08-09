@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Event-driven incident archive for self-healing-docker
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedPattern: "[a-z0-9-]+"
+
+Resources:
+  IncidentBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub self-healing-docker-${Environment}
+
+  IncidentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: incident_id
+          AttributeType: S
+        - AttributeName: service
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incident_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: service-timestamp
+          KeySchema:
+            - AttributeName: service
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  IncidentArchiveBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: archive-old-incidents
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+
+  ArchiveIncidentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: archive_incident.handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 256
+      Environment:
+        Variables:
+          INCIDENT_TABLE_NAME: !Ref IncidentTable
+          INCIDENT_BUCKET_NAME: !Ref IncidentArchiveBucket
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref IncidentTable
+        - S3WritePolicy:
+            BucketName: !Ref IncidentArchiveBucket
+
+  IncidentArchiveRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref IncidentBus
+      EventPattern:
+        source:
+          - self-healing-docker
+        detail-type:
+          - IncidentRecovered
+      Targets:
+        - Arn: !GetAtt ArchiveIncidentFunction.Arn
+          Id: archive-incident
+
+  AllowEventBridgeInvoke:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ArchiveIncidentFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt IncidentArchiveRule.Arn
+
+  LocalExporterPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Least-privilege policy for the local incident exporter
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: events:PutEvents
+            Resource: !GetAtt IncidentBus.Arn
+
+Outputs:
+  EventBusName:
+    Value: !Ref IncidentBus
+  EventBusArn:
+    Value: !GetAtt IncidentBus.Arn
+  IncidentTableName:
+    Value: !Ref IncidentTable
+  IncidentArchiveBucketName:
+    Value: !Ref IncidentArchiveBucket
+  LocalExporterPolicyArn:
+    Value: !Ref LocalExporterPolicy
