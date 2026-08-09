@@ -2,17 +2,33 @@ import threading
 import time
 
 from src import collector, detector, recovery, storage
-from src.config import POLL_INTERVAL_SECONDS
+from src.config import INCIDENT_COOLDOWN_SECONDS, POLL_INTERVAL_SECONDS
 
 _stop = threading.Event()
 _last_tick = {"time": None, "incidents": 0}
+_recent_incidents = {}
+
+
+def should_process(incident, now=None):
+    now = time.time() if now is None else now
+    key = (incident["service"], incident["incident_type"])
+    previous = _recent_incidents.get(key)
+    if previous is not None and now - previous < INCIDENT_COOLDOWN_SECONDS:
+        return False
+    _recent_incidents[key] = now
+    return True
+
+
+def reset_cooldowns():
+    _recent_incidents.clear()
 
 
 def run_once():
     # one full pass: collect -> detect -> recover -> store
     collector.collect_once()
     windows = collector.get_all_windows()
-    incidents = detector.detect_all(windows)
+    detected = detector.detect_all(windows)
+    incidents = [incident for incident in detected if should_process(incident)]
 
     for incident in incidents:
         recovery.recover(incident)

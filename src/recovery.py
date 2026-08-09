@@ -1,4 +1,6 @@
 import threading
+import time
+from datetime import datetime, timezone
 
 # docker might not be importable in test env, don't blow up if it isn't
 try:
@@ -37,6 +39,8 @@ def _restart_container(service):
 
 
 def recover(incident):
+    started = time.perf_counter()
+    incident["recovery_started_at"] = datetime.now(timezone.utc).isoformat()
     action = incident.get("recovery_action")
     service = incident["service"]
 
@@ -53,5 +57,7 @@ def recover(incident):
 
     incident["recovery_status"] = status
     incident["recovery_detail"] = detail
+    incident["recovered_at"] = datetime.now(timezone.utc).isoformat()
+    incident["recovery_latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
     print("[recovery]", service, incident["incident_type"], "->", status)
     return incident
