@@ -1,4 +1,6 @@
 
+import os
+
 SERVICES = ["auth-service", "payments-service", "api-gateway"]
 
 
@@ -23,3 +25,5 @@ THRESHOLDS = {
 
 POLL_INTERVAL_SECONDS = 5
 CHAOS_DURATION_SECONDS = 30
+METRICS_SOURCE = os.getenv("METRICS_SOURCE", "hybrid")
+INCIDENT_COOLDOWN_SECONDS = int(os.getenv("INCIDENT_COOLDOWN_SECONDS", "60"))
