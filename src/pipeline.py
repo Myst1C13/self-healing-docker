@@ -2,11 +2,14 @@ import threading
 import time
 
 from src import collector, detector, recovery, storage
+from src.aws_exporter import exporter_from_env
 from src.config import INCIDENT_COOLDOWN_SECONDS, POLL_INTERVAL_SECONDS
 
 _stop = threading.Event()
 _last_tick = {"time": None, "incidents": 0}
 _recent_incidents = {}
+_aws_exporter = None
+_aws_exporter_loaded = False
 
 
 def should_process(incident, now=None):
@@ -23,6 +26,41 @@ def reset_cooldowns():
     _recent_incidents.clear()
 
 
+def get_aws_exporter():
+    global _aws_exporter, _aws_exporter_loaded
+    if not _aws_exporter_loaded:
+        _aws_exporter = exporter_from_env()
+        _aws_exporter_loaded = True
+    return _aws_exporter
+
+
+def reset_aws_exporter():
+    global _aws_exporter, _aws_exporter_loaded
+    _aws_exporter = None
+    _aws_exporter_loaded = False
+
+
+def export_to_aws(incident):
+    exporter = get_aws_exporter()
+    if exporter is None:
+        return None
+    try:
+        receipt = exporter.publish(incident)
+        return storage.update_incident(
+            incident["incident_id"],
+            aws_export_status="published",
+            aws_event_id=receipt.get("event_id"),
+            aws_event_bus=receipt.get("event_bus"),
+        )
+    except Exception as error:
+        print("[pipeline] AWS export failed:", error)
+        return storage.update_incident(
+            incident["incident_id"],
+            aws_export_status="failed",
+            aws_export_error=str(error),
+        )
+
+
 def run_once():
     # one full pass: collect -> detect -> recover -> store
     collector.collect_once()
@@ -33,6 +71,7 @@ def run_once():
     for incident in incidents:
         recovery.recover(incident)
         storage.save_incident(incident)
+        export_to_aws(incident)
 
     _last_tick["time"] = time.time()
     _last_tick["incidents"] = len(incidents)

@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 numpy
+boto3
 pytest
 docker
 requests
